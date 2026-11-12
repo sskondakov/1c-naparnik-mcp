@@ -47,12 +47,14 @@ type server struct {
 	// files — каталоги, которые пользователь разрешил Напарнику читать и писать (NAPARNIK_FILES_ROOT / NAPARNIK_WRITE_ROOT).
 	files fileAccess
 
+	log *journal // журнал NAPARNIK_LOG; nil — выключен
+
 	mu      sync.Mutex
 	lastMsg map[string]string // conversation_uuid → uuid последнего сообщения ассистента
 }
 
-func newServer(api *naparnik.Client, hasKey bool, files fileAccess, cfg *config, tx *texts) *server {
-	s := &server{api: api, hasKey: hasKey, files: files, cfg: cfg, texts: tx, lastMsg: map[string]string{}}
+func newServer(api *naparnik.Client, hasKey bool, files fileAccess, cfg *config, tx *texts, j *journal) *server {
+	s := &server{api: api, hasKey: hasKey, files: files, cfg: cfg, texts: tx, log: j, lastMsg: map[string]string{}}
 	s.env = newTextEnv(cfg, files.read, files.write)
 	s.tools = s.defineTools()
 	return s
@@ -78,6 +80,7 @@ func (s *server) call(ctx context.Context, t *toolDef, args json.RawMessage) too
 	defer cancel()
 	text, err := t.handler(ctx, args)
 	if err != nil {
+		s.log.errorf("инструмент %s: %v", t.Name, err)
 		return errResult(err.Error())
 	}
 	return toolResult{Content: []textContent{{Type: "text", Text: text}}}
@@ -181,7 +184,7 @@ func requireUUID(raw json.RawMessage) (string, error) {
 	return id, nil
 }
 
-func (s *server) ask(ctx context.Context, raw json.RawMessage) (string, error) {
+func (s *server) ask(ctx context.Context, raw json.RawMessage) (out string, err error) {
 	var a struct {
 		Question            string `json:"question"`
 		ConversationUUID    string `json:"conversation_uuid"`
@@ -218,6 +221,32 @@ func (s *server) ask(ctx context.Context, raw json.RawMessage) (string, error) {
 
 	conv := strings.TrimSpace(a.ConversationUUID)
 	isNew := conv == ""
+
+	// Журнал: начало и итог вопроса (без текста вопроса и ответа).
+	start, rounds, ctxInfo := time.Now(), 0, ""
+	{
+		convName := conv
+		if isNew {
+			convName = "новый"
+		}
+		s.log.infof("вопрос: диалог %s, %d символов, use_files=%v, allow_write=%v", convName, len([]rune(a.Question)), useFiles, a.AllowWrite)
+	}
+	defer func() {
+		result := "ответ получен"
+		if err != nil {
+			result = "ошибка"
+		}
+		changed := "нет"
+		if files != nil && len(files.changed) > 0 {
+			changed = joinSlash(files.changed)
+		}
+		convName := conv
+		if convName == "" {
+			convName = "новый (не создан)"
+		}
+		s.log.infof("итог: диалог %s, %s, %s, раундов %d, контекст %s, изменено: %s", convName, result, secs(time.Since(start)), rounds, orDash(ctxInfo), changed)
+	}()
+
 	var parent *string
 	if isNew {
 		lang := strings.TrimSpace(a.ProgrammingLanguage)
@@ -269,6 +298,12 @@ func (s *server) ask(ctx context.Context, raw json.RawMessage) (string, error) {
 			limitHit = true
 			break
 		}
+		rounds = round + 1
+		names := make([]string, 0, len(last.ToolCalls))
+		for _, tc := range last.ToolCalls {
+			names = append(names, tc.Function.Name)
+		}
+		s.log.infof("раунд %d: %s", rounds, strings.Join(names, ", "))
 		results := make([]naparnik.ToolContent, 0, len(last.ToolCalls))
 		for _, tc := range last.ToolCalls {
 			results = append(results, s.runToolCall(ctx, files, tc))
@@ -320,9 +355,17 @@ func (s *server) ask(ctx context.Context, raw json.RawMessage) (string, error) {
 		}
 	}
 	if ct, err := s.api.ContextTokens(xctx, conv, ""); err == nil && ct.MaxContextLength > 0 {
-		b.WriteString("\ncontext: " + formatContext(ct))
+		ctxInfo = formatContext(ct)
+		b.WriteString("\ncontext: " + ctxInfo)
 	}
 	return b.String(), nil
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
 
 // runToolCall отвечает на один вызов инструмента Напарником.
@@ -335,15 +378,19 @@ func (s *server) runToolCall(ctx context.Context, files *fileTools, tc naparnik.
 		if err != nil {
 			msg := err.Error()
 			res.Status, res.Content = naparnik.ToolStatusError, &msg
+			s.log.errorf("%s %s: %v", name, safeArgs(tc.Function.Arguments), err)
 		} else {
 			res.Status, res.Content = naparnik.ToolStatusOK, &out
+			s.log.debugf("%s %s: ok, %d символов", name, safeArgs(tc.Function.Arguments), len([]rune(out)))
 		}
 	case strings.HasPrefix(name, "local_"):
 		msg := "Доступ к файлам в этом вопросе не предоставлен."
 		res.Status, res.Content = naparnik.ToolStatusError, &msg
+		s.log.errorf("%s %s: доступ к файлам не предоставлен", name, safeArgs(tc.Function.Arguments))
 	default:
 		// Серверный инструмент Напарника — подтверждаем выполнение.
 		res.Status = naparnik.ToolStatusAccepted
+		s.log.debugf("серверный инструмент %s %s", name, safeArgs(tc.Function.Arguments))
 	}
 	return res
 }

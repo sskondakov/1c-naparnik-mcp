@@ -73,7 +73,7 @@ func runRPC(t *testing.T, s *server, lines ...string) []map[string]any {
 }
 
 func TestProtocol(t *testing.T) {
-	s := newServer(naparnik.New("http://127.0.0.1:1", "k"), true, fileAccess{}, defaultConfig(), defaultTexts())
+	s := newServer(naparnik.New("http://127.0.0.1:1", "k"), true, fileAccess{}, defaultConfig(), defaultTexts(), nil)
 	out := runRPC(t, s,
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}`,
 		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
@@ -105,7 +105,7 @@ func TestProtocol(t *testing.T) {
 func TestAskFlow(t *testing.T) {
 	api := fakeAPI(t)
 	defer api.Close()
-	s := newServer(naparnik.New(api.URL, "k"), true, fileAccess{}, defaultConfig(), defaultTexts())
+	s := newServer(naparnik.New(api.URL, "k"), true, fileAccess{}, defaultConfig(), defaultTexts(), nil)
 	out := runRPC(t, s,
 		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"naparnik_ask","arguments":{"question":"Как сделать запрос?"}}}`,
 		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"naparnik_get_conversation","arguments":{"conversation_uuid":"missing"}}}`,
@@ -137,7 +137,7 @@ func TestAskFlow(t *testing.T) {
 }
 
 func TestNoAPIKey(t *testing.T) {
-	s := newServer(naparnik.New("", ""), false, fileAccess{}, defaultConfig(), defaultTexts())
+	s := newServer(naparnik.New("", ""), false, fileAccess{}, defaultConfig(), defaultTexts(), nil)
 	out := runRPC(t, s, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"naparnik_budget"}}`)
 	if out[0]["result"].(map[string]any)["isError"] != true {
 		t.Errorf("expected isError: %v", out[0])

@@ -74,9 +74,7 @@ func TestLoadConfig(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	_ = os.MkdirAll(filepath.Join(dir, "proj"), 0o755)
 	writeCfg(t, dir, "cfg.json", `{
-		"files_root": ["proj"],
 		"ask": {"timeout": "5m"},
 		"files": {"workers": 4, "read_max_bytes": "8KB", "search_file_size": 81920, "bom_crlf_extensions": [".bsl"]},
 		"api": {"base_url": "https://example.test/"}
@@ -93,19 +91,14 @@ func TestLoadConfig(t *testing.T) {
 	if cfg.Files.SearchMaxHits != 80 || cfg.Ask.MaxToolRounds != 30 {
 		t.Error("неуказанные ключи должны остаться по умолчанию")
 	}
-	if !slices.Equal(cfg.FilesRoot, []string{filepath.Join(dir, "proj")}) {
-		t.Errorf("относительный каталог считается от cfg.json: %v", cfg.FilesRoot)
-	}
 
-	// Переменные окружения важнее файла; NAPARNIK_CONFIG указывает на файл явно.
-	other := t.TempDir()
+	// NAPARNIK_CONFIG указывает на файл явно; NAPARNIK_BASE_URL больше не влияет — адрес только в cfg.json.
 	cfg, _, err = loadConfig(envOf(map[string]string{
-		"NAPARNIK_CONFIG":     filepath.Join(dir, "cfg.json"),
-		"NAPARNIK_BASE_URL":   "http://localhost:8080",
-		"NAPARNIK_FILES_ROOT": other + string(filepath.ListSeparator) + dir,
+		"NAPARNIK_CONFIG":   filepath.Join(dir, "cfg.json"),
+		"NAPARNIK_BASE_URL": "http://localhost:8080",
 	}), t.TempDir())
-	if err != nil || cfg.API.BaseURL != "http://localhost:8080" || !slices.Equal(cfg.FilesRoot, []string{other, dir}) {
-		t.Errorf("env: %v %v %v", err, cfg.API.BaseURL, cfg.FilesRoot)
+	if err != nil || cfg.API.BaseURL != "https://example.test" {
+		t.Errorf("env: %v %v", err, cfg.API.BaseURL)
 	}
 }
 
@@ -123,6 +116,8 @@ func TestLoadConfigErrors(t *testing.T) {
 		`{"api": {"base_url": "code.1c.ai"}}`:         "api.base_url",
 		`{"timeouts": {"extra": "10ms"}}`:             "timeouts.extra: должно быть не меньше 1s",
 		`{} {}`:                                       "некорректный JSON",
+		`{"files_root": ["C:/x"]}`:                    "files_root: неизвестный ключ",
+		`{"write_root": []}`:                          "write_root: неизвестный ключ",
 	}
 	for content, want := range cases {
 		dir := t.TempDir()
@@ -143,7 +138,6 @@ func TestDumpConfigRoundTrip(t *testing.T) {
 	c := defaultConfig()
 	c.Files.WalkTimeout = duration(90 * time.Second)
 	c.Files.ReadMaxBytes = 1500
-	c.FilesRoot = []string{"C:/x"}
 	b, err := marshalPretty(c)
 	if err != nil {
 		t.Fatal(err)
@@ -161,7 +155,7 @@ func TestDumpConfigRoundTrip(t *testing.T) {
 // Вшитые тексты покрывают ровно те инструменты и параметры, что объявлены в схемах кода.
 func TestTextsCoverSchemas(t *testing.T) {
 	tx := defaultTexts()
-	s := newServer(naparnik.New("", "k"), true, fileAccess{}, defaultConfig(), tx)
+	s := newServer(naparnik.New("", "k"), true, fileAccess{}, defaultConfig(), tx, nil)
 	if len(s.tools) != len(tx.Agent.Tools) {
 		t.Errorf("инструментов агента: в коде %d, в tools.json %d", len(s.tools), len(tx.Agent.Tools))
 	}
@@ -243,7 +237,7 @@ func TestTextsRender(t *testing.T) {
 	}
 
 	ask := func(acc fileAccess) string {
-		return newServer(naparnik.New("", "k"), true, acc, cfg, tx).tool("naparnik_ask").Description
+		return newServer(naparnik.New("", "k"), true, acc, cfg, tx, nil).tool("naparnik_ask").Description
 	}
 	if d := ask(fileAccess{}); !strings.Contains(d, "не настроен (NAPARNIK_FILES_ROOT не задан)") {
 		t.Errorf("files_access none:\n%s", d)
@@ -254,7 +248,7 @@ func TestTextsRender(t *testing.T) {
 	if d := ask(fileAccess{read: []string{a}, write: []string{a}}); !strings.Contains(d, "править файлы в "+sl(a)+" (только там). Возвращает") {
 		t.Errorf("files_access read_write:\n%s", d)
 	}
-	s := newServer(naparnik.New("", ""), false, fileAccess{}, cfg, tx)
+	s := newServer(naparnik.New("", ""), false, fileAccess{}, cfg, tx, nil)
 	if !strings.HasPrefix(s.instructions(), "Сервер даёт доступ к 1С:Напарнику") {
 		t.Errorf("instructions: %s", s.instructions())
 	}
@@ -272,7 +266,7 @@ func TestTextsOverlay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := newServer(naparnik.New("", "k"), true, fileAccess{}, defaultConfig(), tx)
+	s := newServer(naparnik.New("", "k"), true, fileAccess{}, defaultConfig(), tx, nil)
 	ask := s.tool("naparnik_ask")
 	if ask.Title != "Свой заголовок" || !strings.HasPrefix(ask.Description, "Задать вопрос 1С:Напарнику") {
 		t.Errorf("частичная замена: %q / %q", ask.Title, ask.Description)

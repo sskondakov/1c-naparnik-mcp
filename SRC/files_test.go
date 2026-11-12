@@ -370,7 +370,7 @@ func TestAskWithFiles(t *testing.T) {
 	defer api.Close()
 
 	acc, _ := newFileAccess([]string{root}, []string{out})
-	s := newServer(naparnik.New(api.URL, "k"), true, acc, defaultConfig(), defaultTexts())
+	s := newServer(naparnik.New(api.URL, "k"), true, acc, defaultConfig(), defaultTexts(), nil)
 	if d := s.tool("naparnik_ask").Description; !strings.Contains(d, sl(root)) || !strings.Contains(d, "allow_write=true") {
 		t.Errorf("ask description: %s", d)
 	}

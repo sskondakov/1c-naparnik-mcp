@@ -17,20 +17,19 @@ import (
 	"1c-naparnik-mcp/naparnik"
 )
 
-// Настройки сервера: значения по умолчанию ← cfg.json ← переменные окружения.
+// Настройки установки сервера: значения по умолчанию ← cfg.json рядом с exe.
 // В cfg.json указываются только нужные ключи; любая ошибка в файле — сервер не запускается.
+// Настройки подключения (ключ, каталоги, журнал) задаются только переменными окружения, см. main.go.
 
 const configFileName = "cfg.json"
 
 type config struct {
-	API       apiConfig      `json:"api"`
-	FilesRoot []string       `json:"files_root"`
-	WriteRoot []string       `json:"write_root"`
-	Ask       askConfig      `json:"ask"`
-	Timeouts  timeoutsConfig `json:"timeouts"`
-	History   historyConfig  `json:"history"`
-	Files     filesConfig    `json:"files"`
-	MCP       mcpConfig      `json:"mcp"`
+	API      apiConfig      `json:"api"`
+	Ask      askConfig      `json:"ask"`
+	Timeouts timeoutsConfig `json:"timeouts"`
+	History  historyConfig  `json:"history"`
+	Files    filesConfig    `json:"files"`
+	MCP      mcpConfig      `json:"mcp"`
 }
 
 type apiConfig struct {
@@ -84,8 +83,6 @@ type mcpConfig struct {
 
 func defaultConfig() *config {
 	return &config{
-		FilesRoot: []string{},
-		WriteRoot: []string{},
 		API: apiConfig{
 			BaseURL:    naparnik.DefaultBaseURL,
 			APIPrefix:  naparnik.DefaultAPIPrefix,
@@ -180,25 +177,6 @@ func loadConfig(getenv func(string) string, exe string) (cfg *config, path strin
 		if err := cfg.parse(data); err != nil {
 			return nil, "", fmt.Errorf("%s: %v", path, err)
 		}
-		dir := filepath.Dir(path)
-		for _, list := range []*[]string{&cfg.FilesRoot, &cfg.WriteRoot} {
-			for i, d := range *list {
-				if d = strings.TrimSpace(d); d != "" && !filepath.IsAbs(filepath.FromSlash(d)) {
-					d = filepath.Join(dir, filepath.FromSlash(d))
-				}
-				(*list)[i] = d
-			}
-		}
-	}
-	// Переменные окружения важнее файла.
-	if v := strings.TrimSpace(getenv("NAPARNIK_BASE_URL")); v != "" {
-		cfg.API.BaseURL = v
-	}
-	if v := strings.TrimSpace(getenv("NAPARNIK_FILES_ROOT")); v != "" {
-		cfg.FilesRoot = filepath.SplitList(v)
-	}
-	if v := strings.TrimSpace(getenv("NAPARNIK_WRITE_ROOT")); v != "" {
-		cfg.WriteRoot = filepath.SplitList(v)
 	}
 	cfg.API.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.API.BaseURL), "/")
 	if err := cfg.validate(); err != nil {

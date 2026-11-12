@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // DefaultBaseURL — базовый адрес публичного API.
@@ -27,6 +28,16 @@ type Client struct {
 	UserAgent  string
 	MaxSSELine int // максимальная длина строки потока; 0 — DefaultMaxSSELine
 	HTTP       *http.Client
+
+	// OnRequest (может быть nil) вызывается после каждого запроса к API, для журнала:
+	// метод, путь без префикса, HTTP-код (0 — ответа нет), время с учётом чтения потока, ошибка.
+	OnRequest func(method, path string, status int, dur time.Duration, err error)
+}
+
+func (c *Client) report(method, path string, status int, start time.Time, err error) {
+	if c.OnRequest != nil {
+		c.OnRequest(method, path, status, time.Since(start), err)
+	}
 }
 
 // New создаёт клиент. Пустой baseURL заменяется на DefaultBaseURL.
@@ -139,7 +150,9 @@ func (c *Client) newRequest(ctx context.Context, method, path string, body any) 
 	return req, nil
 }
 
-func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
+func (c *Client) do(ctx context.Context, method, path string, body, out any) (err error) {
+	start, status := time.Now(), 0
+	defer func() { c.report(method, path, status, start, err) }()
 	req, err := c.newRequest(ctx, method, path, body)
 	if err != nil {
 		return err
@@ -149,6 +162,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 		return err
 	}
 	defer resp.Body.Close()
+	status = resp.StatusCode
 
 	if resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -254,8 +268,11 @@ func (c *Client) Budget(ctx context.Context) (*Budget, error) {
 // SendMessage отправляет сообщение и читает SSE-поток до конца.
 // onPacket (может быть nil) вызывается для каждого пакета — например, для прогресса.
 // При ошибке возвращается и частично собранный результат.
-func (c *Client) SendMessage(ctx context.Context, id string, req MessageRequest, onPacket func(StreamPacket)) (*StreamResult, error) {
-	hr, err := c.newRequest(ctx, http.MethodPost, convPath(id, "/messages"), req)
+func (c *Client) SendMessage(ctx context.Context, id string, req MessageRequest, onPacket func(StreamPacket)) (res *StreamResult, err error) {
+	path := convPath(id, "/messages")
+	start, status := time.Now(), 0
+	defer func() { c.report(http.MethodPost, path, status, start, err) }()
+	hr, err := c.newRequest(ctx, http.MethodPost, path, req)
 	if err != nil {
 		return nil, err
 	}
@@ -266,6 +283,7 @@ func (c *Client) SendMessage(ctx context.Context, id string, req MessageRequest,
 		return nil, err
 	}
 	defer resp.Body.Close()
+	status = resp.StatusCode
 
 	if resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
