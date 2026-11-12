@@ -204,3 +204,7 @@ claude mcp add naparnik -e NAPARNIK_API_KEY=... -e NAPARNIK_FILES_ROOT=C:/1CProj
 - Генерация кода: [Claude Opus 5.5 от Anthropic](https://claude.com/)
 - Компилятор: [Go 1.27](https://go.dev/)
 - Генерация описания: [Claude Opus 5.5 от Anthropic](https://claude.com/)
+
+## Лицензия
+
+[GNU General Public License v3.0](LICENSE)
