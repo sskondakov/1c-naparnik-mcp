@@ -1,0 +1,24 @@
+# Ключ API — никогда не в репозиторий
+naparnik.key
+*.key
+
+# Результат сборки и локальные настройки рядом с exe
+BIN/
+
+# Локальные документы
+API.docx
+Заметки.md
+Спецификация.md
+*.pdf
+
+# Временные файлы записи и сборки Go
+.naparnik-*.tmp
+*.test
+*.out
+
+# Редакторы и ОС
+.vscode/
+.idea/
+.claude/
+Thumbs.db
+desktop.ini
